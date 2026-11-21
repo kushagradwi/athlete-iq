@@ -1,0 +1,44 @@
+name: athleteiq
+x-backend-env: &benv
+  DATABASE_URL: postgresql+psycopg://athleteiq:athleteiq@db:5432/athleteiq
+  REDIS_URL: redis://redis:6379/0
+  JOB_MODE: queue
+  STORAGE: local  # set STORAGE=s3 + S3_* vars to use S3/MinIO
+  LOCAL_STORAGE_DIR: /data/raw
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+  GC_API_URL: ${GC_API_URL:-http://host.docker.internal:12021}
+  GC_ATHLETE: ${GC_ATHLETE:-}
+  GC_AUTOIMPORT_DIR: /gc-autoimport
+  CORS_ORIGINS: http://localhost:3000
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment: { POSTGRES_USER: athleteiq, POSTGRES_PASSWORD: athleteiq, POSTGRES_DB: athleteiq }
+    ports: ["5433:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U athleteiq"], interval: 3s, retries: 20 }
+  redis:
+    image: redis:7-alpine
+  api:
+    build: ./backend
+    environment: *benv
+    ports: ["8000:8000"]
+    volumes: ["./gc-autoimport:/gc-autoimport", "raw:/data/raw"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on: { db: { condition: service_healthy }, redis: { condition: service_started } }
+  worker:
+    build: ./backend
+    # one process/thread keeps uploads analysed in order, so each run is compared only with earlier ones
+    command: ["dramatiq", "athleteiq.worker", "--processes", "1", "--threads", "1"]
+    environment: *benv
+    volumes: ["./gc-autoimport:/gc-autoimport", "raw:/data/raw"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on: [api]
+  web:
+    build: { context: ./frontend, args: { API_URL: "http://api:8000" } }
+    ports: ["3000:3000"]
+    depends_on: [api]
+
+volumes: { pgdata: {}, raw: {} }

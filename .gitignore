@@ -1,0 +1,9 @@
+.venv
+node_modules
+.next
+__pycache__
+*.db
+backend/storage
+gc-autoimport
+.env
+*.egg-info
